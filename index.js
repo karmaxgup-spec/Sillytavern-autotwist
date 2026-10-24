@@ -12,7 +12,8 @@ const defaultSettings = {
     messageCount: 15,
     autoTwistEnabled: false,
     autoTwistEvery: 10,
-    randomTwistEnabled: false
+    randomTwistEnabled: false,
+    autoTwistKeywords: ""
 };
 
 // Chance (0–1) that any single chat message (yours or the AI's) triggers a random plot twist
@@ -462,6 +463,21 @@ function showSettingsPopup() {
                 <input type="checkbox" id="fawn-set-random-enabled" ${s.randomTwistEnabled ? 'checked' : ''}>
                 Random twist: 1% chance on every message
             </label>
+            <div style="margin-top:12px;">
+                <div style="color:var(--SmartThemeBodyColor); font-size:${isMobile ? '14px' : '13px'}; margin-bottom:${isMobile ? '8px' : '6px'}; opacity:0.8;">
+                    Preferences (comma-separated keywords, one picked at random):
+                </div>
+                <input type="text" id="fawn-set-auto-keywords" value="${(s.autoTwistKeywords || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}" placeholder="betrayal, revelation, unexpected ally" style="
+                    width:100%;
+                    padding:${isMobile ? '12px' : '8px 10px'};
+                    background:var(--SmartThemeInputColor);
+                    border:1px solid var(--SmartThemeBorderColor);
+                    border-radius:8px;
+                    color:var(--SmartThemeBodyColor);
+                    font-size:${isMobile ? '14px' : '13px'};
+                    box-sizing:border-box;
+                ">
+            </div>
         </div>
 
         <div style="display:flex; gap:${isMobile ? '10px' : '8px'}; justify-content:center; ${isMobile ? 'flex-direction: column;' : ''}">
@@ -523,6 +539,7 @@ function showSettingsPopup() {
         extension_settings[extensionName].autoTwistEnabled = document.getElementById("fawn-set-auto-enabled").checked;
         extension_settings[extensionName].autoTwistEvery = autoEvery;
         extension_settings[extensionName].randomTwistEnabled = document.getElementById("fawn-set-random-enabled").checked;
+        extension_settings[extensionName].autoTwistKeywords = document.getElementById("fawn-set-auto-keywords").value;
         saveSettings();
         toastr.success("Settings saved");
         closePopup();
@@ -1270,6 +1287,17 @@ function addFawnMenu() {
 }
 
 // ========== СОБЫТИЯ ==========
+// ========== ВЫБОР ПРЕДПОЧТЕНИЯ ДЛЯ АВТО-ТВИСТА ==========
+// Splits the comma-separated keywords and picks ONE uniformly at random
+// (each keyword has an equal 1/N chance). Returns "" if no keywords are set.
+function pickAutoTwistPreference() {
+    const raw = extension_settings[extensionName]?.autoTwistKeywords || "";
+    const keywords = raw.split(",").map(k => k.trim()).filter(k => k.length > 0);
+    if (keywords.length === 0) return "";
+    const index = Math.floor(Math.random() * keywords.length);
+    return `preferences for {{char}}: ${keywords[index]}`;
+}
+
 // ========== АВТО-ПЛОТ-ТВИСТ КАЖДЫЕ X ОТВЕТОВ ==========
 function getAutoCountKey() {
     return `fawn_auto_count_${getCurrentChatId()}`;
@@ -1312,7 +1340,7 @@ function maybeAutoPlotTwist() {
 
     saveAutoCount(0);
     toastr.info("Auto plot twist generating...");
-    drivePlotWithPreferences('twist', '', true);
+    drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
 }
 
 // ========== СЛУЧАЙНЫЙ ПЛОТ-ТВИСТ (1% НА КАЖДОЕ СООБЩЕНИЕ) ==========
@@ -1332,7 +1360,7 @@ function rollRandomTwist() {
 function applyPendingRandomTwist() {
     if (!pendingRandomTwist || isGenerating) return;
     pendingRandomTwist = false;
-    drivePlotWithPreferences('twist', '', true);
+    drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
 }
 
 // Your messages: roll only (the twist is applied after the AI's reply, see below)
