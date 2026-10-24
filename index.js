@@ -19,6 +19,10 @@ const defaultSettings = {
 // Chance (0–1) that any single chat message (yours or the AI's) triggers a random plot twist
 const RANDOM_TWIST_CHANCE = 0.01;
 
+// How many AI replies an OOC instruction stays active for
+const OOC_TURNS = 2;
+let oocTurnsLeft = 0;
+
 if (!extension_settings[extensionName]) {
     extension_settings[extensionName] = { ...defaultSettings };
 }
@@ -173,6 +177,7 @@ ${text}
 
     // СОХРАНЯЕМ активный OOC для этого чата
     saveActiveOOCForChat(text);
+    oocTurnsLeft = OOC_TURNS;
     
     lastGeneratedOOC = null;
     updateMenuState();
@@ -192,6 +197,8 @@ function clearPlotPrompt() {
         extension_prompt_roles.SYSTEM
     );
     
+    oocTurnsLeft = 0;
+
     // ОЧИЩАЕМ активный OOC для этого чата
     clearActiveOOCForChat();
     
@@ -1343,6 +1350,18 @@ function maybeAutoPlotTwist() {
     drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
 }
 
+// Called after each AI reply. The OOC stays active for OOC_TURNS replies, then clears.
+function consumeOOCTurn() {
+    if (oocTurnsLeft > 0) {
+        oocTurnsLeft--;
+        if (oocTurnsLeft > 0) {
+            updateMenuState();
+            return;
+        }
+    }
+    clearPlotPrompt();
+}
+
 // ========== СЛУЧАЙНЫЙ ПЛОТ-ТВИСТ (1% НА КАЖДОЕ СООБЩЕНИЕ) ==========
 let pendingRandomTwist = false;
 
@@ -1369,7 +1388,7 @@ eventSource.on(event_types.MESSAGE_SENT, function() {
 });
 
 eventSource.on(event_types.MESSAGE_RECEIVED, function() {
-    clearPlotPrompt();
+    consumeOOCTurn();
     updateMenuState();
     rollRandomTwist();
     applyPendingRandomTwist();
