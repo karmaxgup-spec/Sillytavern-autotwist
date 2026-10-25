@@ -23,6 +23,9 @@ const RANDOM_TWIST_CHANCE = 0.01;
 const OOC_TURNS = 2;
 let oocTurnsLeft = 0;
 
+// An automatic twist that has finished generating, waiting for the next user message
+let readyTwist = null;
+
 if (!extension_settings[extensionName]) {
     extension_settings[extensionName] = { ...defaultSettings };
 }
@@ -741,8 +744,9 @@ OOC:`;
 
         if (oocText && oocText.length > 10 && !oocText.includes('undefined')) {
             if (silent) {
-                // Automatic twists go straight in (no preview popup)
-                addPlotPrompt(oocText);
+                // Automatic twists wait here until the user's next message (no popup)
+                readyTwist = oocText;
+                toastr.info("Plot twist ready, applies to your next message");
             } else {
                 lastGeneratedOOC = { text: oocText, type: type, preferences: preferences };
                 showOOCPreview(oocText, type);
@@ -1350,6 +1354,15 @@ function maybeAutoPlotTwist() {
     drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
 }
 
+// Called when the user sends a message, right before the AI generates.
+// Applies a finished automatic twist, but never replaces an OOC that is still in its turns.
+function applyReadyTwist() {
+    if (!readyTwist || oocTurnsLeft > 0) return;
+    const text = readyTwist;
+    readyTwist = null;
+    addPlotPrompt(text);
+}
+
 // Called after each AI reply. The OOC stays active for OOC_TURNS replies, then clears.
 function consumeOOCTurn() {
     if (oocTurnsLeft > 0) {
@@ -1382,9 +1395,11 @@ function applyPendingRandomTwist() {
     drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
 }
 
-// Your messages: roll only (the twist is applied after the AI's reply, see below)
+// Your messages: roll for a random twist, then apply any finished automatic twist
+// before the AI generates its reply to this message
 eventSource.on(event_types.MESSAGE_SENT, function() {
     rollRandomTwist();
+    applyReadyTwist();
 });
 
 eventSource.on(event_types.MESSAGE_RECEIVED, function() {
@@ -1466,6 +1481,10 @@ jQuery(() => {
     // ОБНОВЛЯЕМ ПРИ СМЕНЕ ЧАТА
     eventSource.on(event_types.CHAT_CHANGED, function() {
         console.log('Fawn: Chat changed, reloading settings and OOC...');
+
+        // Twists generated for the previous chat must not carry over
+        readyTwist = null;
+        pendingRandomTwist = false;
         
         // Перезагружаем настройки для нового чата
         loadSettings();
