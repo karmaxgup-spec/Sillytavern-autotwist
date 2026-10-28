@@ -746,6 +746,8 @@ OOC:`;
             if (silent) {
                 // Automatic twists wait here until the user's next message (no popup)
                 readyTwist = oocText;
+                recordTwistKeyword(keywordInFlight);
+                keywordInFlight = null;
                 toastr.info("Plot twist ready, applies to your next message");
             } else {
                 lastGeneratedOOC = { text: oocText, type: type, preferences: preferences };
@@ -1299,14 +1301,41 @@ function addFawnMenu() {
 
 // ========== СОБЫТИЯ ==========
 // ========== ВЫБОР ПРЕДПОЧТЕНИЯ ДЛЯ АВТО-ТВИСТА ==========
-// Splits the comma-separated keywords and picks ONE uniformly at random
-// (each keyword has an equal 1/N chance). Returns "" if no keywords are set.
-function pickAutoTwistPreference() {
+// Keywords used by the last 2 automatic twists (in this chat)
+let recentTwistKeywords = [];
+// Keyword for the automatic twist currently generating
+let keywordInFlight = null;
+
+// Picks ONE keyword uniformly at random from the list, skipping the keywords used
+// by the previous 2 automatic twists. Returns null if no keywords are set.
+function pickAutoTwistKeyword() {
     const raw = extension_settings[extensionName]?.autoTwistKeywords || "";
-    const keywords = raw.split(",").map(k => k.trim()).filter(k => k.length > 0);
-    if (keywords.length === 0) return "";
-    const index = Math.floor(Math.random() * keywords.length);
-    return `preferences for {{char}}: ${keywords[index]}`;
+    const keywords = [...new Set(raw.split(",").map(k => k.trim()).filter(k => k.length > 0))];
+    if (keywords.length === 0) return null;
+
+    let candidates = keywords.filter(k => !recentTwistKeywords.includes(k));
+    // If the list is too short to avoid repeats, fall back to the full list
+    if (candidates.length === 0) candidates = keywords;
+
+    return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function recordTwistKeyword(keyword) {
+    if (!keyword) return;
+    recentTwistKeywords = [...recentTwistKeywords, keyword].slice(-2);
+}
+
+// Only one automatic twist at a time: none generating, none waiting to be applied
+function canStartAutoTwist() {
+    return !isGenerating && !readyTwist;
+}
+
+function startAutoTwist() {
+    const keyword = pickAutoTwistKeyword();
+    keywordInFlight = keyword;
+    const preferences = keyword ? `preferences for {{char}}: ${keyword}` : "";
+    toastr.info("Auto plot twist generating...");
+    drivePlotWithPreferences('twist', preferences, true);
 }
 
 // ========== АВТО-ПЛОТ-ТВИСТ КАЖДЫЕ X ОТВЕТОВ ==========
@@ -1343,15 +1372,14 @@ function maybeAutoPlotTwist() {
 
     const count = loadAutoCount() + 1;
 
-    // If a generation is already running, keep the count so it fires on the next reply
-    if (count < every || isGenerating) {
+    // If a twist is already generating or waiting, keep the count so it fires later
+    if (count < every || !canStartAutoTwist()) {
         saveAutoCount(count);
         return;
     }
 
     saveAutoCount(0);
-    toastr.info("Auto plot twist generating...");
-    drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
+    startAutoTwist();
 }
 
 // Called when the user sends a message, right before the AI generates.
@@ -1390,9 +1418,9 @@ function rollRandomTwist() {
 
 // Generates a pending random twist. Waits if another generation is running.
 function applyPendingRandomTwist() {
-    if (!pendingRandomTwist || isGenerating) return;
+    if (!pendingRandomTwist || !canStartAutoTwist()) return;
     pendingRandomTwist = false;
-    drivePlotWithPreferences('twist', pickAutoTwistPreference(), true);
+    startAutoTwist();
 }
 
 // Your messages: roll for a random twist, then apply any finished automatic twist
@@ -1402,7 +1430,25 @@ eventSource.on(event_types.MESSAGE_SENT, function() {
     applyReadyTwist();
 });
 
+// The key of the last AI reply handled, so one reply is never counted twice
+// (for example if SillyTavern fires the event more than once for the same message)
+let lastHandledReplyKey = null;
+
+function isNewAIReply() {
+    const chat = getContext()?.chat || [];
+    const last = chat[chat.length - 1];
+    if (!last || last.is_user) return false;
+    const key = `${chat.length}|${last.send_date}`;
+    if (key === lastHandledReplyKey) return false;
+    lastHandledReplyKey = key;
+    return true;
+}
+
 eventSource.on(event_types.MESSAGE_RECEIVED, function() {
+    if (!isNewAIReply()) {
+        console.log('Fawn: Duplicate reply event ignored');
+        return;
+    }
     consumeOOCTurn();
     updateMenuState();
     rollRandomTwist();
@@ -1485,6 +1531,7 @@ jQuery(() => {
         // Twists generated for the previous chat must not carry over
         readyTwist = null;
         pendingRandomTwist = false;
+        recentTwistKeywords = [];
         
         // Перезагружаем настройки для нового чата
         loadSettings();
